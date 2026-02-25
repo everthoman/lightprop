@@ -354,12 +354,13 @@ def train_conformal_model(X_trainval, y_trainval, task,
     from sklearn.impute import SimpleImputer
 
     try:
-        from mapie.regression import MapieRegressor
-        from mapie.classification import MapieClassifier
+        from mapie.regression import CrossConformalRegressor, SplitConformalRegressor
+        from mapie.classification import CrossConformalClassifier, SplitConformalClassifier
     except ImportError:
         raise ImportError("Install MAPIE: pip install mapie")
 
     imputer = SimpleImputer(strategy="median")
+    confidence_level = 1.0 - alpha
 
     if cv_folds > 0:
         logger.info(
@@ -371,15 +372,19 @@ def train_conformal_model(X_trainval, y_trainval, task,
         base_model = get_lgbm_model(task, lgbm_params)
 
         if task == "regression":
-            mapie = MapieRegressor(
-                estimator=base_model, method="plus", cv=cv_folds, n_jobs=-1,
+            mapie = CrossConformalRegressor(
+                estimator=base_model, confidence_level=confidence_level,
+                cv=cv_folds, n_jobs=-1,
             )
+            mapie.fit_conformalize(X_imp, y_trainval)
+            fitted_base = mapie._mapie_regressor.estimator_.single_estimator_
         else:
-            mapie = MapieClassifier(
-                estimator=base_model, method="score", cv=cv_folds,
+            mapie = CrossConformalClassifier(
+                estimator=base_model, confidence_level=confidence_level,
+                cv=cv_folds,
             )
-        mapie.fit(X_imp, y_trainval)
-        fitted_base = mapie.estimator_
+            mapie.fit_conformalize(X_imp, y_trainval)
+            fitted_base = mapie._mapie_classifier.estimator_.single_estimator_
 
     else:
         if X_cal is None or y_cal is None:
@@ -394,14 +399,14 @@ def train_conformal_model(X_trainval, y_trainval, task,
         fitted_base.fit(X_tr_imp, y_trainval)
 
         if task == "regression":
-            mapie = MapieRegressor(
-                estimator=fitted_base, method="base", cv="prefit", n_jobs=-1,
+            mapie = SplitConformalRegressor(
+                estimator=fitted_base, confidence_level=confidence_level, prefit=True,
             )
         else:
-            mapie = MapieClassifier(
-                estimator=fitted_base, method="score", cv="prefit",
+            mapie = SplitConformalClassifier(
+                estimator=fitted_base, confidence_level=confidence_level, prefit=True,
             )
-        mapie.fit(X_cal_imp, y_cal)
+        mapie.conformalize(X_cal_imp, y_cal)
 
     return mapie, imputer, fitted_base
 
@@ -410,10 +415,10 @@ def predict_conformal(mapie, imputer, X_test, task, alpha=0.1):
     """Generate conformal predictions."""
     X_imp = imputer.transform(X_test)
     if task == "regression":
-        y_pred, y_pis = mapie.predict(X_imp, alpha=alpha)
+        y_pred, y_pis = mapie.predict_interval(X_imp)
         return y_pred, y_pis   # y_pis: (n, 2, 1)
     else:
-        y_pred, y_sets = mapie.predict(X_imp, alpha=alpha, include_last_label=True)
+        y_pred, y_sets = mapie.predict_set(X_imp)
         return y_pred, y_sets
 
 
@@ -796,7 +801,7 @@ def run_pipeline(args):
         X_all_imp = imputer.transform(X)
 
         if args.task == "regression":
-            y_pred_all, y_pis_all = mapie.predict(X_all_imp, alpha=args.alpha)
+            y_pred_all, y_pis_all = mapie.predict_interval(X_all_imp)
             pred_all_df = pd.DataFrame({
                 "ID":                  ids_valid,
                 "SMILES":              df_valid[args.smiles_col].values,
@@ -808,9 +813,7 @@ def run_pipeline(args):
                 "split":               split_labels,
             })
         else:
-            y_pred_all, y_sets_all = mapie.predict(
-                X_all_imp, alpha=args.alpha, include_last_label=True,
-            )
+            y_pred_all, y_sets_all = mapie.predict_set(X_all_imp)
             proba_all = fitted_base.predict_proba(X_all_imp)
             pred_all_df = pd.DataFrame({
                 "ID":                    ids_valid,
@@ -909,7 +912,7 @@ def run_predict(args):
     X_imp = imputer.transform(X)
 
     if task == "regression":
-        y_pred, y_pis = mapie.predict(X_imp, alpha=alpha)
+        y_pred, y_pis = mapie.predict_interval(X_imp)
         pred_df = pd.DataFrame({
             "ID":       [ids[i] for i in valid_idx],
             "SMILES":   [smiles[i] for i in valid_idx],
@@ -919,7 +922,7 @@ def run_predict(args):
             "PI_width": y_pis[:, 1, 0] - y_pis[:, 0, 0],
         })
     else:
-        y_pred, y_sets = mapie.predict(X_imp, alpha=alpha, include_last_label=True)
+        y_pred, y_sets = mapie.predict_set(X_imp)
         proba = fitted_base.predict_proba(X_imp)
         pred_df = pd.DataFrame({
             "ID":                  [ids[i] for i in valid_idx],
