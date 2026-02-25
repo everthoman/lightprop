@@ -1,0 +1,32 @@
+name: lightprop
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+
+  # Core scientific stack — prefer conda builds for binary compatibility
+  - numpy>=1.24
+  - pandas>=2.0
+  - scikit-learn>=1.3
+
+  # RDKit — always install via conda-forge, never pip
+  - rdkit>=2023.09
+
+  # LightGBM
+  - lightgbm>=4.0
+
+  # Progress bars
+  - tqdm>=4.65
+
+  - pip:
+      # Mordred descriptor calculator (no conda package available)
+      # Use mordredcommunity if mordred gives install issues on Python 3.11+
+      - mordred>=1.2.0
+
+      # Conformal prediction wrapper for scikit-learn estimators
+      - mapie>=0.8.0
+
+      # Bayesian hyperparameter optimisation
+      - optuna>=3.4.0
